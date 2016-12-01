@@ -21,8 +21,8 @@
 //Structure for queue.
 typedef struct request_queue
 {
-  int       m_socket;
-  char    m_szRequest[MAX_REQUEST_LENGTH];
+  int m_socket;
+  char m_szRequest[MAX_REQUEST_LENGTH];
 } request_queue_t;
 
 void * dispatch(void * arg)
