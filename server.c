@@ -1,8 +1,8 @@
-/* csci4061 S2016 Assignment 4 
-* section: one_digit_number 
-* date: mm/dd/yy 
-* names: Name of each member of the team (for partners)
-* UMN Internet ID, Student ID (xxxxxxxx, 4444444), (for partners)
+/* csci4061 F2016 Assignment 4
+* section: 9
+* date: 11/30/2016
+* names: Tiannan Zhou, Annelies Odermann
+* UMN Internet ID, Student ID zhou0745(5232494), oderm008(4740784)
 */
 
 #include <stdio.h>
@@ -21,29 +21,29 @@
 //Structure for queue.
 typedef struct request_queue
 {
-        int             m_socket;
-        char    m_szRequest[MAX_REQUEST_LENGTH];
+  int       m_socket;
+  char    m_szRequest[MAX_REQUEST_LENGTH];
 } request_queue_t;
 
 void * dispatch(void * arg)
 {
-        return NULL;
+  return NULL;
 }
 
 void * worker(void * arg)
 {
-        return NULL;
+  return NULL;
 }
 
 int main(int argc, char **argv)
 {
-        //Error check first.
-        if(argc != 6 && argc != 7)
-        {
-                printf("usage: %s port path num_dispatcher num_workers queue_length [cache_size]\n", argv[0]);
-                return -1;
-        }
+  //Error check first.
+  if(argc != 6 && argc != 7)
+  {
+    printf("usage: %s port path num_dispatcher num_workers queue_length [cache_size]\n", argv[0]);
+    return -1;
+  }
 
-        printf("Call init() first and make a dispather and worker threads\n");
-        return 0;
+  printf("Call init() first and make a dispather and worker threads\n");
+  return 0;
 }
