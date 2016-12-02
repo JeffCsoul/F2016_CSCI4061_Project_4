@@ -38,12 +38,29 @@ void * worker(void * arg)
 int main(int argc, char **argv)
 {
   //Error check first.
+  int port_num;
+  char path_prefix[1024];
+  int num_dispatcher;
+  int num_workers;
+  int queue_length;
+  int size_cache;
+
   if(argc != 6 && argc != 7)
   {
     printf("usage: %s port path num_dispatcher num_workers queue_length [cache_size]\n", argv[0]);
     return -1;
   }
 
+  port_num = atoi(argv[1]);
+  strncpy(path_prefix, argv[2], 1024);
+  num_dispatcher = atoi(argv[3]);
+  num_workers = atoi(argv[4]);
+  queue_length = atoi(argv[5]);
+  if (argc == 7) {
+    size_cache = atoi(argv[6]);
+  }
+
   printf("Call init() first and make a dispather and worker threads\n");
+  init(port_num);
   return 0;
 }
