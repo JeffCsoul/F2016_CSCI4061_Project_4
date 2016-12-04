@@ -12,21 +12,26 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <errno.h>
+#include <unistd.h>
 #include "util.h"
 
 #define MAX_THREADS 100
 #define MAX_QUEUE_SIZE 100
 #define MAX_REQUEST_LENGTH 64
+#define MAX_PATH_LEN 2048
+#define MAX_RTN_LEN 128
+#define MAX_BUF_SIZE 524288
 
-const char HTML_STR[MAX_REQUEST_LENGTH] = "text/html";
-const char TXT_STR[MAX_REQUEST_LENGTH] = "text/plain";
-const char GIF_STR[MAX_REQUEST_LENGTH] = "image/gif";
-const char JPEG_STR[MAX_REQUEST_LENGTH] = "image/jpeg";
+char HTML_STR[MAX_RTN_LEN] = "text/html";
+char TXT_STR[MAX_RTN_LEN] = "text/plain";
+char GIF_STR[MAX_RTN_LEN] = "image/gif";
+char JPG_STR[MAX_RTN_LEN] = "image/jpeg";
 
-const char ERROR_FILE[MAX_REQUEST_LENGTH] = "File not found.";
-const char ERROR_EXT[MAX_REQUEST_LENGTH] = "File extension not allowed.";
-const char ERROR_FBD[MAX_REQUEST_LENGTH] = "Permission Denied.";
-const char ERROR_UNK[MAX_REQUEST_LENGTH] = "Unknown error.";
+char ERROR_FILE[MAX_RTN_LEN] = "File not found.";
+char ERROR_FBD[MAX_RTN_LEN] = "Permission Denied.";
+char ERROR_UNK[MAX_RTN_LEN] = "Unknown error.";
+char ERROR_LEN[MAX_RTN_LEN] = "Request too long.";
 
 static pthread_mutex_t buffer_access = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t buffer_full = PTHREAD_COND_INITIALIZER;
@@ -36,6 +41,7 @@ int dispatch_completed;
 
 int port_num;
 char path_prefix[1024];
+int prefix_len;
 int num_dispatcher;
 int num_workers;
 int queue_length;
@@ -72,6 +78,9 @@ void * dispatch(void * arg)
     req_packet = (request_queue_t*) malloc(sizeof(request_queue_t));
     req_packet->m_socket = fd;
     strncpy(req_packet->m_szRequest, filename, MAX_REQUEST_LENGTH);
+    if (strlen(filename) >= MAX_REQUEST_LENGTH) {
+      req_packet->m_szRequest[MAX_REQUEST_LENGTH - 1] = 30;
+    }
     stack_req[stack_top] = req_packet;
     stack_top++;
 
@@ -83,6 +92,13 @@ void * dispatch(void * arg)
 
 void * worker(void * arg)
 {
+  struct stat stat_file_att;
+  char* return_type_file;
+  int filed;
+  int size_file_in_byte, nread;
+  int len_full_path;
+  char full_path[MAX_PATH_LEN];
+  char buf[MAX_BUF_SIZE];
   request_queue_t* req_packet;
   while (1) {
     pthread_mutex_lock(&buffer_access);
@@ -95,7 +111,53 @@ void * worker(void * arg)
     stack_top--;
     num_req++;
     req_packet = stack_req[stack_top];
+    if (req_packet->m_szRequest[MAX_REQUEST_LENGTH - 1] != 30) {
+      strncpy(full_path, path_prefix, prefix_len);
+      strncpy(full_path + prefix_len,
+              req_packet->m_szRequest,
+              MAX_REQUEST_LENGTH);
+      if ((filed = open(full_path, O_RDONLY)) != -1) {
+        len_full_path = strlen(full_path);
 
+        if (len_full_path > 5 &&
+            strcmp(full_path + len_full_path - 5, ".html") == 0) {
+          return_type_file = HTML_STR;
+        } else if (len_full_path > 4 &&
+                   strcmp(full_path + len_full_path - 4, ".gif") == 0) {
+          return_type_file = GIF_STR;
+        } else if (len_full_path > 4 &&
+                   strcmp(full_path + len_full_path - 4, ".jpg") == 0) {
+          return_type_file = JPG_STR;
+        } else {
+          return_type_file = TXT_STR;
+        }
+        // start to read files
+        stat(full_path, &stat_file_att);
+        size_file_in_byte = stat_file_att.st_size;
+        printf("size got: %d\n", size_file_in_byte);
+        nread = read(filed, buf, size_file_in_byte);
+        printf("size read: %d\n", nread);
+        size_file_in_byte = nread;
+        return_result(req_packet->m_socket,
+                      return_type_file,
+                      buf,
+                      size_file_in_byte);
+        close(filed);
+      } else {
+        // have difficulty to reach the file
+        if (errno == ENOENT) {
+          return_error(req_packet->m_socket, ERROR_FILE);
+        } else if (errno == EACCES) {
+          return_error(req_packet->m_socket, ERROR_FBD);
+        } else {
+          return_error(req_packet->m_socket, ERROR_UNK);
+        }
+      }
+    } else {
+      // the request is too long
+      return_error(req_packet->m_socket, ERROR_LEN);
+    }
+    free(req_packet);
     pthread_cond_signal(&buffer_empty);
     pthread_mutex_unlock(&buffer_access);
   }
@@ -116,6 +178,7 @@ int main(int argc, char **argv)
 
   port_num = atoi(argv[1]);
   strncpy(path_prefix, argv[2], 1024);
+  prefix_len = strlen(path_prefix);
   num_dispatcher = atoi(argv[3]);
   if (num_dispatcher <= 0 || num_dispatcher > MAX_THREADS) {
     printf("Please enter a valid num_dispatcher (1-%d)\n", MAX_THREADS);
@@ -139,7 +202,6 @@ int main(int argc, char **argv)
 
   dispatch_completed = 0;
 
-  printf("Call init() first and make dispather and worker threads\n");
   init(port_num);
 
   int i;
@@ -150,7 +212,7 @@ int main(int argc, char **argv)
     }
   }
   for (i = 0; i < num_workers; i++) {
-    if (pthread_create(&t_workers[i], NULL, worker, NULL) != 0) {
+    if (pthread_create(&t_workers[i], NULL, worker, (void *) &i) != 0) {
       printf("Error creating worker thread\n");
       exit(1);
     }
