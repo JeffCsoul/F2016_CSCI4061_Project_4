@@ -18,6 +18,16 @@
 #define MAX_QUEUE_SIZE 100
 #define MAX_REQUEST_LENGTH 64
 
+const char HTML_STR[MAX_REQUEST_LENGTH] = "text/html";
+const char TXT_STR[MAX_REQUEST_LENGTH] = "text/plain";
+const char GIF_STR[MAX_REQUEST_LENGTH] = "image/gif";
+const char JPEG_STR[MAX_REQUEST_LENGTH] = "image/jpeg";
+
+const char ERROR_FILE[MAX_REQUEST_LENGTH] = "File not found.";
+const char ERROR_EXT[MAX_REQUEST_LENGTH] = "File extension not allowed.";
+const char ERROR_FBD[MAX_REQUEST_LENGTH] = "Permission Denied.";
+const char ERROR_UNK[MAX_REQUEST_LENGTH] = "Unknown error.";
+
 static pthread_mutex_t buffer_access = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t buffer_full = PTHREAD_COND_INITIALIZER;
 static pthread_cond_t buffer_empty = PTHREAD_COND_INITIALIZER;
@@ -39,20 +49,31 @@ typedef struct request_queue
 } request_queue_t;
 
 request_queue_t* stack_req[MAX_QUEUE_SIZE];
+int stack_top = 0;
 int num_req = 0;
 
 void * dispatch(void * arg)
 {
+  int fd;
+  char filename[1024];
+  request_queue_t* req_packet;
   while (1) {
-    if (accept_connection() < 0) {
+    if ((fd = accept_connection()) < 0) {
       pthread_exit(NULL);
     }
     pthread_mutex_lock(&buffer_access);
-    while (num_req == queue_length) {
+    if (get_request(fd, filename) != 0) {
+      continue;
+    }
+    while (stack_top == queue_length) {
       pthread_cond_wait(&buffer_empty, &buffer_access);
     }
 
-    num_req++;
+    req_packet = (request_queue_t*) malloc(sizeof(request_queue_t));
+    req_packet->m_socket = fd;
+    strncpy(req_packet->m_szRequest, filename, MAX_REQUEST_LENGTH);
+    stack_req[stack_top] = req_packet;
+    stack_top++;
 
     pthread_cond_signal(&buffer_full);
     pthread_mutex_unlock(&buffer_access);
@@ -62,15 +83,18 @@ void * dispatch(void * arg)
 
 void * worker(void * arg)
 {
+  request_queue_t* req_packet;
   while (1) {
     pthread_mutex_lock(&buffer_access);
-    while (num_req == 0) {
+    while (stack_top == 0) {
       if (dispatch_completed == 1)
         pthread_exit(NULL);
       pthread_cond_wait(&buffer_full, &buffer_access);
     }
 
-    num_req--;
+    stack_top--;
+    num_req++;
+    req_packet = stack_req[stack_top];
 
     pthread_cond_signal(&buffer_empty);
     pthread_mutex_unlock(&buffer_access);
