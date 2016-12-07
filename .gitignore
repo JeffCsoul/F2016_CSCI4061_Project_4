@@ -33,3 +33,7 @@ web_server
 # Debug files
 *.dSYM/
 *.su
+
+# junk data downloaded for tests
+junk
+
