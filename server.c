@@ -133,6 +133,7 @@ void log_request(int thread_id, int num_req, request_queue_t* req_packet, int by
             comp_time(req_packet->time_s, time_e)
            );
   }
+  fflush(log_file);
 
 }
 

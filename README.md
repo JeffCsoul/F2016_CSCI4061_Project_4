@@ -23,6 +23,5 @@ You just need to use GNU makefile to compile this project.
 
 **Usage**
 
-- in order for the log file to be written correctly, the program must be closed with `ctrl+c`.
 
 **Description**
