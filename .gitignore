@@ -37,3 +37,6 @@ web_server
 # junk data downloaded for tests
 junk
 
+# server log
+web_server_log
+
