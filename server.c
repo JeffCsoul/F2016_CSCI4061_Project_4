@@ -199,7 +199,7 @@ void * worker(void * arg)
           log_request(t_n_id, num_req, req_packet, -1, ERROR_FILE);
         } else if (errno == EACCES) {
           return_error(req_packet->m_socket, ERROR_FBD);
-          log_request(t_n_id, num_req, req_packet, -1, ERROR_FILE);
+          log_request(t_n_id, num_req, req_packet, -1, ERROR_FBD);
         } else {
           return_error(req_packet->m_socket, ERROR_UNK);
           log_request(t_n_id, num_req, req_packet, -1, ERROR_UNK);
