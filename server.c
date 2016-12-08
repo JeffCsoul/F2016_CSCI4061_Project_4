@@ -7,6 +7,7 @@
 
 #include <stdio.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
@@ -47,6 +48,8 @@ int num_dispatcher;
 int num_workers;
 int queue_length;
 int size_cache = 0;
+
+FILE * log_file;
 
 //Structure for queue.
 typedef struct request_queue
@@ -101,16 +104,41 @@ void * dispatch(void * arg)
     req_packet->time_s = time_s;
     stack_req[stack_top] = req_packet;
     stack_top++;
-    printf("incoming packet\n");
     pthread_cond_signal(&buffer_full);
     pthread_mutex_unlock(&buffer_access);
   }
   return NULL;
 }
 
+void log_request(int thread_id, int num_req, request_queue_t* req_packet, int bytes_returned, char * err) {
+  struct timeval time_e;
+  gettimeofday(&time_e, NULL);
+
+  if (bytes_returned >= 0) {
+    fprintf(log_file, "[%d][%d][%d][%s][%d][%.0fus]\n",
+            thread_id,
+            num_req,
+            req_packet->m_socket,
+            req_packet->m_szRequest,
+            bytes_returned,
+            comp_time(req_packet->time_s, time_e)
+           );
+  } else {
+    fprintf(log_file, "[%d][%d][%d][%s][%s][%.0fus]\n",
+            thread_id,
+            num_req,
+            req_packet->m_socket,
+            req_packet->m_szRequest,
+            err,
+            comp_time(req_packet->time_s, time_e)
+           );
+  }
+  fflush(log_file);
+
+}
+
 void * worker(void * arg)
 {
-  struct timeval time_e;
   struct stat stat_file_att;
   char* return_type_file;
   int filed;
@@ -158,73 +186,33 @@ void * worker(void * arg)
         stat(full_path, &stat_file_att);
         size_file_in_byte = stat_file_att.st_size;
         nread = read(filed, buf, size_file_in_byte);
-        gettimeofday(&time_e, NULL);
         return_result(req_packet->m_socket,
                       return_type_file,
                       buf,
                       size_file_in_byte);
-        printf("[%d][%d][%d][%s][%d bytes][%.0fus]\n",
-               t_n_id,
-               num_req,
-               req_packet->m_socket,
-               req_packet->m_szRequest,
-               size_file_in_byte,
-               comp_time(req_packet->time_s, time_e)
-               );
+        log_request(t_n_id, num_req, req_packet, size_file_in_byte, "");
         close(filed);
       } else {
         // have difficulty to reach the file
         if (errno == ENOENT) {
-          gettimeofday(&time_e, NULL);
           return_error(req_packet->m_socket, ERROR_FILE);
-          printf("[%d][%d][%d][%s][%s][%.0fus]\n",
-                 t_n_id,
-                 num_req,
-                 req_packet->m_socket,
-                 req_packet->m_szRequest,
-                 ERROR_FILE,
-                 comp_time(req_packet->time_s, time_e)
-                 );
+          log_request(t_n_id, num_req, req_packet, -1, ERROR_FILE);
         } else if (errno == EACCES) {
-          gettimeofday(&time_e, NULL);
           return_error(req_packet->m_socket, ERROR_FBD);
-          printf("[%d][%d][%d][%s][%s][%.0fus]\n",
-                 t_n_id,
-                 num_req,
-                 req_packet->m_socket,
-                 req_packet->m_szRequest,
-                 ERROR_FBD,
-                 comp_time(req_packet->time_s, time_e)
-                 );
+          log_request(t_n_id, num_req, req_packet, -1, ERROR_FBD);
         } else {
-          gettimeofday(&time_e, NULL);
           return_error(req_packet->m_socket, ERROR_UNK);
-          printf("[%d][%d][%d][%s][%s][%.0fus]\n",
-                 t_n_id,
-                 num_req,
-                 req_packet->m_socket,
-                 req_packet->m_szRequest,
-                 ERROR_UNK,
-                 comp_time(req_packet->time_s, time_e)
-                 );
+          log_request(t_n_id, num_req, req_packet, -1, ERROR_UNK);
         }
       }
     } else {
       // the request is too long
-      gettimeofday(&time_e, NULL);
       return_error(req_packet->m_socket, ERROR_LEN);
       req_packet->m_szRequest[MAX_REQUEST_LENGTH - 1] = 0;
       req_packet->m_szRequest[MAX_REQUEST_LENGTH - 2] = '.';
       req_packet->m_szRequest[MAX_REQUEST_LENGTH - 3] = '.';
       req_packet->m_szRequest[MAX_REQUEST_LENGTH - 4] = '.';
-      printf("[%d][%d][%d][%s][%s][%.0fus]\n",
-             t_n_id,
-             num_req,
-             req_packet->m_socket,
-             req_packet->m_szRequest,
-             ERROR_LEN,
-             comp_time(req_packet->time_s, time_e)
-             );
+      log_request(t_n_id, num_req, req_packet, -1, ERROR_LEN);
     }
     free(req_packet);
     pthread_cond_signal(&buffer_empty);
@@ -233,8 +221,17 @@ void * worker(void * arg)
   return NULL;
 }
 
+void stop_server(int signo) {
+  fclose(log_file);
+  exit(0);
+}
+
 int main(int argc, char **argv)
 {
+  struct sigaction act;
+  act.sa_handler = stop_server;
+  sigfillset(&act.sa_mask);
+
   //Error check first.
   pthread_t t_dispathers[MAX_THREADS];
   pthread_t t_workers[MAX_THREADS];
@@ -270,6 +267,10 @@ int main(int argc, char **argv)
   }
 
   dispatch_completed = 0;
+
+  log_file = fopen("web_server_log", "a");
+  // make sure to close the file when server is quit
+  sigaction(SIGINT, &act, NULL);
 
   init(port_num);
 
