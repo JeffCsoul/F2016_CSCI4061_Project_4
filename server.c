@@ -59,9 +59,22 @@ typedef struct request_queue
   struct timeval time_s;
 } request_queue_t;
 
-request_queue_t* stack_req[MAX_QUEUE_SIZE];
-int stack_top = 0;
+typedef struct buffer_cache
+{
+  int m_usage;
+  char m_request[MAX_REQUEST_LENGTH];
+  char m_data[MAX_BUF_SIZE];
+  int m_data_size;
+  char* m_return_type;
+  char* m_error_type;
+} buffer_cache_t;
+
+request_queue_t* queue_req[MAX_QUEUE_SIZE];
+buffer_cache_t* buffer_pool[MAX_BUF_SIZE];
+int queue_head = 0;
+int queue_tail = 0;
 int num_req = 0;
+
 
 double comp_time(struct timeval time_s, struct timeval time_e) {
   double elap = 0.0;
@@ -75,6 +88,34 @@ double comp_time(struct timeval time_s, struct timeval time_e) {
   return elap;
 }
 
+void log_request(int thread_id, int num_req, request_queue_t* req_packet, int bytes_returned, char * err, int hit_or_miss) {
+  struct timeval time_e;
+  gettimeofday(&time_e, NULL);
+
+  if (bytes_returned >= 0) {
+    fprintf(log_file, "[%d][%d][%d][%s][%d][%.0fus][%s]\n",
+            thread_id,
+            num_req,
+            req_packet->m_socket,
+            req_packet->m_szRequest,
+            bytes_returned,
+            comp_time(req_packet->time_s, time_e),
+            (size_cache ? (hit_or_miss ? "HIT" : "MISS") : "N/A")
+           );
+  } else {
+    fprintf(log_file, "[%d][%d][%d][%s][%s][%.0fus][%s]\n",
+            thread_id,
+            num_req,
+            req_packet->m_socket,
+            req_packet->m_szRequest,
+            err,
+            comp_time(req_packet->time_s, time_e),
+            (size_cache ? (hit_or_miss ? "HIT" : "MISS") : "N/A")
+           );
+  }
+  fflush(log_file);
+}
+
 void * dispatch(void * arg)
 {
   struct timeval time_s;
@@ -85,12 +126,12 @@ void * dispatch(void * arg)
     if ((fd = accept_connection()) < 0) {
       pthread_exit(NULL);
     }
+    pthread_mutex_lock(&buffer_access);
     gettimeofday (&time_s, NULL);
     if (get_request(fd, filename) != 0) {
       continue;
     }
-    pthread_mutex_lock(&buffer_access);
-    while (stack_top == queue_length) {
+    while (queue_tail - queue_head >= queue_length - 1) {
       // pthread_yield();
       pthread_cond_wait(&buffer_empty, &buffer_access);
     }
@@ -102,71 +143,82 @@ void * dispatch(void * arg)
       req_packet->m_szRequest[MAX_REQUEST_LENGTH - 1] = 30;
     }
     req_packet->time_s = time_s;
-    stack_req[stack_top] = req_packet;
-    stack_top++;
+    queue_req[queue_tail % queue_length] = req_packet;
+    // printf("Tail: %d\n", queue_tail);
+    queue_tail++;
     pthread_cond_signal(&buffer_full);
     pthread_mutex_unlock(&buffer_access);
   }
   return NULL;
 }
 
-void log_request(int thread_id, int num_req, request_queue_t* req_packet, int bytes_returned, char * err) {
-  struct timeval time_e;
-  gettimeofday(&time_e, NULL);
-
-  if (bytes_returned >= 0) {
-    fprintf(log_file, "[%d][%d][%d][%s][%d][%.0fus]\n",
-            thread_id,
-            num_req,
-            req_packet->m_socket,
-            req_packet->m_szRequest,
-            bytes_returned,
-            comp_time(req_packet->time_s, time_e)
-           );
-  } else {
-    fprintf(log_file, "[%d][%d][%d][%s][%s][%.0fus]\n",
-            thread_id,
-            num_req,
-            req_packet->m_socket,
-            req_packet->m_szRequest,
-            err,
-            comp_time(req_packet->time_s, time_e)
-           );
-  }
-  fflush(log_file);
-
-}
-
 void * worker(void * arg)
 {
+  int i, found_cache, rest_round;
   struct stat stat_file_att;
-  char* return_type_file;
   int filed;
   int size_file_in_byte, nread;
   int len_full_path;
   char full_path[MAX_PATH_LEN];
   char buf[MAX_BUF_SIZE];
+  char* return_type_file;
+  char* return_error_num;
+  buffer_cache_t* cache_packet;
   request_queue_t* req_packet;
 
   int t_n_id = *((int *) arg);
-
+  queue_head = queue_tail = 0;
   while (1) {
+    size_file_in_byte = 0;
     pthread_mutex_lock(&buffer_access);
-    while (stack_top == 0) {
+    while (queue_head == queue_tail) {
       if (dispatch_completed == 1)
         pthread_exit(NULL);
       // pthread_yield();
       pthread_cond_wait(&buffer_full, &buffer_access);
     }
 
-    stack_top--;
     num_req++;
-    req_packet = stack_req[stack_top];
+    req_packet = queue_req[queue_head % queue_length];
+    // printf("Head: %d\n", queue_head);
+    queue_head++;
     if (req_packet->m_szRequest[MAX_REQUEST_LENGTH - 1] != 30) {
       strncpy(full_path, path_prefix, prefix_len);
       strncpy(full_path + prefix_len,
               req_packet->m_szRequest,
               MAX_REQUEST_LENGTH);
+      //
+      // found_cache = 0;
+      // for (i = 0; i < size_cache && buffer_pool[i] != NULL; i++) {
+      //   if (strcmp(req_packet->m_szRequest, buffer_pool[i]->m_request) == 0) {
+      //     found_cache = 1;
+      //     if (buffer_pool[i]->m_data_size >= 0) {
+      //       return_result(req_packet->m_socket,
+      //                     buffer_pool[i]->m_return_type,
+      //                     buffer_pool[i]->m_data,
+      //                     buffer_pool[i]->m_data_size
+      //                     );
+      //     } else {
+      //       return_error(req_packet->m_socket, buffer_pool[i]->m_error_type);
+      //     }
+      //     log_request(t_n_id,
+      //                 num_req,
+      //                 req_packet,
+      //                 buffer_pool[i]->m_data_size,
+      //                 buffer_pool[i]->m_error_type,
+      //                 1
+      //                 );
+      //     buffer_pool[i]->m_usage++;
+      //     break;
+      //   }
+      // }
+      // if (found_cache) {
+      //   free(req_packet);
+      //   pthread_cond_signal(&buffer_empty);
+      //   pthread_mutex_unlock(&buffer_access);
+      //   continue;
+      // }
+
       if ((filed = open(full_path, O_RDONLY)) != -1) {
         len_full_path = strlen(full_path);
 
@@ -190,21 +242,44 @@ void * worker(void * arg)
                       return_type_file,
                       buf,
                       size_file_in_byte);
-        log_request(t_n_id, num_req, req_packet, size_file_in_byte, "");
+        log_request(t_n_id, num_req, req_packet, size_file_in_byte, "", 0);
         close(filed);
       } else {
         // have difficulty to reach the file
         if (errno == ENOENT) {
           return_error(req_packet->m_socket, ERROR_FILE);
-          log_request(t_n_id, num_req, req_packet, -1, ERROR_FILE);
+          log_request(t_n_id, num_req, req_packet, -1, ERROR_FILE, 0);
         } else if (errno == EACCES) {
           return_error(req_packet->m_socket, ERROR_FBD);
-          log_request(t_n_id, num_req, req_packet, -1, ERROR_FBD);
+          log_request(t_n_id, num_req, req_packet, -1, ERROR_FBD, 0);
         } else {
           return_error(req_packet->m_socket, ERROR_UNK);
-          log_request(t_n_id, num_req, req_packet, -1, ERROR_UNK);
+          log_request(t_n_id, num_req, req_packet, -1, ERROR_UNK, 0);
         }
       }
+      //
+      // cache_packet = (buffer_cache_t *) malloc(sizeof(buffer_cache_t));
+      // cache_packet->m_usage = 1;
+      // strncpy(cache_packet->m_request,
+      //         req_packet->m_szRequest,
+      //         MAX_REQUEST_LENGTH);
+      // memcpy(cache_packet->m_data, buf, size_file_in_byte);
+      // if (size_file_in_byte == 0)
+      //   cache_packet->m_data_size = -1;
+      // cache_packet->m_return_type = return_type_file;
+      // cache_packet->m_error_type = return_error_num;
+      // if (i < size_cache) {
+      //   buffer_pool[i] = cache_packet;
+      // } else {
+      //   i = 0;
+      //   rest_round = size_cache;
+      //   while (rest_round > 0) {
+      //     i++;
+      //     i = (i >= size_cache ? i - size_cache : i);
+      //     rest_round--;
+      //   }
+      // }
+
     } else {
       // the request is too long
       return_error(req_packet->m_socket, ERROR_LEN);
@@ -212,7 +287,7 @@ void * worker(void * arg)
       req_packet->m_szRequest[MAX_REQUEST_LENGTH - 2] = '.';
       req_packet->m_szRequest[MAX_REQUEST_LENGTH - 3] = '.';
       req_packet->m_szRequest[MAX_REQUEST_LENGTH - 4] = '.';
-      log_request(t_n_id, num_req, req_packet, -1, ERROR_LEN);
+      log_request(t_n_id, num_req, req_packet, -1, ERROR_LEN, 0);
     }
     free(req_packet);
     pthread_cond_signal(&buffer_empty);
@@ -228,6 +303,7 @@ void stop_server(int signo) {
 
 int main(int argc, char **argv)
 {
+  int i;
   struct sigaction act;
   act.sa_handler = stop_server;
   sigfillset(&act.sa_mask);
@@ -265,7 +341,8 @@ int main(int argc, char **argv)
   } else {
     size_cache = 0;
   }
-
+  for (i = 0; i < size_cache; i++)
+    buffer_pool[i] = NULL;
   dispatch_completed = 0;
 
   log_file = fopen("web_server_log", "a");
@@ -274,7 +351,6 @@ int main(int argc, char **argv)
 
   init(port_num);
 
-  int i;
   for (i = 0; i < num_dispatcher; i++) {
     if (pthread_create(&t_dispathers[i], NULL, dispatch, NULL) != 0) {
       printf("Error creating dispatch thread\n");
