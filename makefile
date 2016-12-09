@@ -13,3 +13,6 @@ test_server: web_server
 
 test_request:
 	cat ./testing/urls | xargs -n 1 -P 8 wget --directory-prefix=./junk
+
+test_server_cache: web_server
+	./web_server 9001 ./testing 100 100 100 10

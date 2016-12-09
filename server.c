@@ -24,6 +24,7 @@
 #define MAX_PATH_LEN 2048
 #define MAX_RTN_LEN 128
 #define MAX_BUF_SIZE 524288
+#define MAX_CACHE_SIZE 100
 
 char HTML_STR[MAX_RTN_LEN] = "text/html";
 char TXT_STR[MAX_RTN_LEN] = "text/plain";
@@ -70,7 +71,7 @@ typedef struct buffer_cache
 } buffer_cache_t;
 
 request_queue_t* queue_req[MAX_QUEUE_SIZE];
-buffer_cache_t* buffer_pool[MAX_BUF_SIZE];
+buffer_cache_t* buffer_pool[MAX_CACHE_SIZE];
 int queue_head = 0;
 int queue_tail = 0;
 int num_req = 0;
@@ -154,7 +155,7 @@ void * dispatch(void * arg)
 
 void * worker(void * arg)
 {
-  int i, found_cache, rest_round;
+  int i, found_cache;
   struct stat stat_file_att;
   int filed;
   int size_file_in_byte, nread;
@@ -187,37 +188,37 @@ void * worker(void * arg)
       strncpy(full_path + prefix_len,
               req_packet->m_szRequest,
               MAX_REQUEST_LENGTH);
-      //
-      // found_cache = 0;
-      // for (i = 0; i < size_cache && buffer_pool[i] != NULL; i++) {
-      //   if (strcmp(req_packet->m_szRequest, buffer_pool[i]->m_request) == 0) {
-      //     found_cache = 1;
-      //     if (buffer_pool[i]->m_data_size >= 0) {
-      //       return_result(req_packet->m_socket,
-      //                     buffer_pool[i]->m_return_type,
-      //                     buffer_pool[i]->m_data,
-      //                     buffer_pool[i]->m_data_size
-      //                     );
-      //     } else {
-      //       return_error(req_packet->m_socket, buffer_pool[i]->m_error_type);
-      //     }
-      //     log_request(t_n_id,
-      //                 num_req,
-      //                 req_packet,
-      //                 buffer_pool[i]->m_data_size,
-      //                 buffer_pool[i]->m_error_type,
-      //                 1
-      //                 );
-      //     buffer_pool[i]->m_usage++;
-      //     break;
-      //   }
-      // }
-      // if (found_cache) {
-      //   free(req_packet);
-      //   pthread_cond_signal(&buffer_empty);
-      //   pthread_mutex_unlock(&buffer_access);
-      //   continue;
-      // }
+
+      found_cache = 0;
+      for (i = 0; i < size_cache && buffer_pool[i] != NULL; i++) {
+        if (strcmp(req_packet->m_szRequest, buffer_pool[i]->m_request) == 0) {
+          found_cache = 1;
+          if (buffer_pool[i]->m_data_size >= 0) {
+            return_result(req_packet->m_socket,
+                          buffer_pool[i]->m_return_type,
+                          buffer_pool[i]->m_data,
+                          buffer_pool[i]->m_data_size
+                          );
+          } else {
+            return_error(req_packet->m_socket, buffer_pool[i]->m_error_type);
+          }
+          log_request(t_n_id,
+                      num_req,
+                      req_packet,
+                      buffer_pool[i]->m_data_size,
+                      buffer_pool[i]->m_error_type,
+                      1
+                      );
+          buffer_pool[i]->m_usage++;
+          break;
+        }
+      }
+      if (found_cache) {
+        free(req_packet);
+        pthread_cond_signal(&buffer_empty);
+        pthread_mutex_unlock(&buffer_access);
+        continue;
+      }
 
       if ((filed = open(full_path, O_RDONLY)) != -1) {
         len_full_path = strlen(full_path);
@@ -257,28 +258,36 @@ void * worker(void * arg)
           log_request(t_n_id, num_req, req_packet, -1, ERROR_UNK, 0);
         }
       }
-      //
-      // cache_packet = (buffer_cache_t *) malloc(sizeof(buffer_cache_t));
-      // cache_packet->m_usage = 1;
-      // strncpy(cache_packet->m_request,
-      //         req_packet->m_szRequest,
-      //         MAX_REQUEST_LENGTH);
-      // memcpy(cache_packet->m_data, buf, size_file_in_byte);
-      // if (size_file_in_byte == 0)
-      //   cache_packet->m_data_size = -1;
-      // cache_packet->m_return_type = return_type_file;
-      // cache_packet->m_error_type = return_error_num;
-      // if (i < size_cache) {
-      //   buffer_pool[i] = cache_packet;
-      // } else {
-      //   i = 0;
-      //   rest_round = size_cache;
-      //   while (rest_round > 0) {
-      //     i++;
-      //     i = (i >= size_cache ? i - size_cache : i);
-      //     rest_round--;
-      //   }
-      // }
+
+      if (size_cache != 0) {
+        cache_packet = (buffer_cache_t *) malloc(sizeof(buffer_cache_t));
+        cache_packet->m_usage = 1;
+        strncpy(cache_packet->m_request,
+                req_packet->m_szRequest,
+                MAX_REQUEST_LENGTH);
+        memcpy(cache_packet->m_data, buf, size_file_in_byte);
+        if (size_file_in_byte == 0)
+          cache_packet->m_data_size = -1;
+        else
+          cache_packet->m_data_size = size_file_in_byte;
+        cache_packet->m_return_type = return_type_file;
+        cache_packet->m_error_type = return_error_num;
+        if (i < size_cache) {
+          buffer_pool[i] = cache_packet;
+        } else {
+          i = 0;
+          while (1) {
+            i = (i >= size_cache ? i - size_cache : i);
+            buffer_pool[i]->m_usage--;
+            if (buffer_pool[i]->m_usage <= 0) {
+              free(buffer_pool[i]);
+              buffer_pool[i] = cache_packet;
+              break;
+            }
+            i++;
+          }
+        }
+      }
 
     } else {
       // the request is too long
@@ -297,6 +306,7 @@ void * worker(void * arg)
 }
 
 void stop_server(int signo) {
+  int i;
   fclose(log_file);
   exit(0);
 }
@@ -315,7 +325,7 @@ int main(int argc, char **argv)
   if(argc != 6 && argc != 7)
   {
     printf("usage: %s port path num_dispatcher num_workers queue_length [cache_size]\n", argv[0]);
-    return -1;
+    return 1;
   }
 
   port_num = atoi(argv[1]);
@@ -324,20 +334,24 @@ int main(int argc, char **argv)
   num_dispatcher = atoi(argv[3]);
   if (num_dispatcher <= 0 || num_dispatcher > MAX_THREADS) {
     printf("Please enter a valid num_dispatcher (1-%d)\n", MAX_THREADS);
-    return -1;
+    return 1;
   }
   num_workers = atoi(argv[4]);
   if (num_workers <= 0 || num_workers > MAX_THREADS) {
     printf("Please enter a valid num_workers (1-%d)\n", MAX_THREADS);
-    return -1;
+    return 1;
   }
   queue_length = atoi(argv[5]);
   if (queue_length > MAX_QUEUE_SIZE) {
     printf("Please enter a valid queue_length (1-%d)\n", MAX_QUEUE_SIZE);
-    return -1;
+    return 1;
   }
   if (argc == 7) {
     size_cache = atoi(argv[6]);
+    if (size_cache > MAX_CACHE_SIZE) {
+      printf("Please enter a valid cache size (1-%d)\n", MAX_CACHE_SIZE);
+      return 1;
+    }
   } else {
     size_cache = 0;
   }
