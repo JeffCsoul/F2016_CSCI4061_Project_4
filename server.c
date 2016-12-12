@@ -153,10 +153,8 @@ void * worker(void * arg)
   while (1) {
     pthread_mutex_lock(&buffer_access);
     while (stack_top == 0) {
-      if (dispatch_completed == 1) {
-        pthread_mutex_unlock(&buffer_access);
+      if (dispatch_completed == 1)
         pthread_exit(NULL);
-      }
       // pthread_yield();
       pthread_cond_wait(&buffer_full, &buffer_access);
     }
