@@ -279,7 +279,7 @@ void * worker(void * arg)
           cache_packet->m_data_size = size_file_in_byte;
         cache_packet->m_return_type = return_type_file;
         cache_packet->m_error_type = return_error_num;
-        if (i < size_cache) {
+        if (i < size_cache && buffer_pool[i] == NULL) {
           buffer_pool[i] = cache_packet;
         } else {
           i = 0;
