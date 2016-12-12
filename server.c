@@ -124,12 +124,12 @@ void * dispatch(void * arg)
   request_queue_t* req_packet;
   while (1) {
     if ((fd = accept_connection()) < 0) {
-      pthread_cond_signal(&buffer_full);
       pthread_exit(NULL);
     }
     pthread_mutex_lock(&buffer_access);
     gettimeofday (&time_s, NULL);
     if (get_request(fd, filename) != 0) {
+      pthread_mutex_unlock(&buffer_access);
       continue;
     }
     while (queue_tail - queue_head >= queue_length - 1) {
