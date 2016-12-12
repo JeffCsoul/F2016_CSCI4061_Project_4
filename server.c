@@ -1,6 +1,5 @@
 /* csci4061 F2016 Assignment 4
-* section: 9
-* date: 11/30/2016
+* date: 12/11/2016
 * names: Tiannan Zhou, Annelies Odermann
 * UMN Internet ID, Student ID zhou0745(5232494), oderm008(4740784)
 */

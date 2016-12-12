@@ -21,6 +21,10 @@ You just need to use GNU makefile to compile this project.
 	* Completed log system and debug
 
 **Usage**
+~~~
+./web_server port_# path num_dispatch num_worker queue_len cache_size
+~~~
 
+The server would be automatically started after run the command above.
 
-**Description**
+Log information will be stored in a file called 'web_server_log' in the format of `[ThreadID][RequestID][fd][Request_string][bytes/error][time_cost][Cache_status]`.
