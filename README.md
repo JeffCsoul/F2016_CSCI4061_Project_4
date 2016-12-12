@@ -22,9 +22,15 @@ You just need to use GNU makefile to compile this project.
 
 **Usage**
 ~~~
+./web_server port_# path num_dispatch num_worker queue_len
+~~~
+
+The command line above would start the server with the normal mode.
+
+~~~
 ./web_server port_# path num_dispatch num_worker queue_len cache_size
 ~~~
 
-The server would be automatically started after run the command above.
+The server would be automatically started with cache mode after run the command above. We used LRU algorithm (which is a algorithm most used in database) to cache data.
 
 Log information will be stored in a file called 'web_server_log' in the format of `[ThreadID][RequestID][fd][Request_string][bytes/error][time_cost][Cache_status]`.
