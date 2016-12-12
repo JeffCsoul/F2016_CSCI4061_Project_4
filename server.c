@@ -124,6 +124,7 @@ void * dispatch(void * arg)
   request_queue_t* req_packet;
   while (1) {
     if ((fd = accept_connection()) < 0) {
+      pthread_cond_signal(&buffer_full);
       pthread_exit(NULL);
     }
     pthread_mutex_lock(&buffer_access);
@@ -384,9 +385,13 @@ int main(int argc, char **argv)
       printf("Error joining dispatch thread\n");
   }
   dispatch_completed = 1;
+  for (i = 0; i < num_workers; i++)
+    pthread_cond_signal(&buffer_full);
+  fprintf(stderr, "All dispatch exit\n");
   for (i = 0; i < num_workers; i++) {
     if (pthread_join(t_workers[i], NULL) != 0)
       printf("Error joining worker thread\n");
   }
+  fclose(log_file);
   return 0;
 }
