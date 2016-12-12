@@ -34,6 +34,7 @@ char ERROR_FILE[MAX_RTN_LEN] = "File not found.";
 char ERROR_FBD[MAX_RTN_LEN] = "Permission Denied.";
 char ERROR_UNK[MAX_RTN_LEN] = "Unknown error.";
 char ERROR_LEN[MAX_RTN_LEN] = "Request too long.";
+char NO_ERROR[MAX_RTN_LEN] = "";
 
 static pthread_mutex_t buffer_access = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t buffer_full = PTHREAD_COND_INITIALIZER;
@@ -129,6 +130,7 @@ void * dispatch(void * arg)
     pthread_mutex_lock(&buffer_access);
     gettimeofday (&time_s, NULL);
     if (get_request(fd, filename) != 0) {
+      pthread_mutex_unlock(&buffer_access);
       continue;
     }
     while (queue_tail - queue_head >= queue_length - 1) {
@@ -170,6 +172,7 @@ void * worker(void * arg)
   queue_head = queue_tail = 0;
   while (1) {
     size_file_in_byte = 0;
+    return_error_num = NO_ERROR;
     pthread_mutex_lock(&buffer_access);
     while (queue_head == queue_tail) {
       if (dispatch_completed == 1) {
@@ -250,12 +253,15 @@ void * worker(void * arg)
         // have difficulty to reach the file
         if (errno == ENOENT) {
           return_error(req_packet->m_socket, ERROR_FILE);
+          return_error_num = ERROR_FILE;
           log_request(t_n_id, num_req, req_packet, -1, ERROR_FILE, 0);
         } else if (errno == EACCES) {
           return_error(req_packet->m_socket, ERROR_FBD);
+          return_error_num = ERROR_FBD;
           log_request(t_n_id, num_req, req_packet, -1, ERROR_FBD, 0);
         } else {
           return_error(req_packet->m_socket, ERROR_UNK);
+          return_error_num = ERROR_UNK;
           log_request(t_n_id, num_req, req_packet, -1, ERROR_UNK, 0);
         }
       }
@@ -293,6 +299,7 @@ void * worker(void * arg)
     } else {
       // the request is too long
       return_error(req_packet->m_socket, ERROR_LEN);
+      return_error_num = ERROR_LEN;
       req_packet->m_szRequest[MAX_REQUEST_LENGTH - 1] = 0;
       req_packet->m_szRequest[MAX_REQUEST_LENGTH - 2] = '.';
       req_packet->m_szRequest[MAX_REQUEST_LENGTH - 3] = '.';
@@ -384,9 +391,13 @@ int main(int argc, char **argv)
       printf("Error joining dispatch thread\n");
   }
   dispatch_completed = 1;
+  for (i = 0; i < num_workers; i++)
+    pthread_cond_signal(&buffer_full);
+  fprintf(stderr, "All dispatch exit\n");
   for (i = 0; i < num_workers; i++) {
     if (pthread_join(t_workers[i], NULL) != 0)
       printf("Error joining worker thread\n");
   }
+  fclose(log_file);
   return 0;
 }
