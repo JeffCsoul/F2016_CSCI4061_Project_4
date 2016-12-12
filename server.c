@@ -173,8 +173,10 @@ void * worker(void * arg)
     size_file_in_byte = 0;
     pthread_mutex_lock(&buffer_access);
     while (queue_head == queue_tail) {
-      if (dispatch_completed == 1)
+      if (dispatch_completed == 1) {
+        pthread_mutex_unlock(&buffer_access);
         pthread_exit(NULL);
+      }
       // pthread_yield();
       pthread_cond_wait(&buffer_full, &buffer_access);
     }
